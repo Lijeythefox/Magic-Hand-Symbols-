@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mystic Hands</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0;
+    background: #05050a;
+    color: #f2c879;
+    font-family: 'Space Mono', monospace;
+    overflow: hidden;
+    height: 100%;
+  }
+  #stage {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+  video {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    filter: brightness(0.55) saturate(0.7);
+  }
+  canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
+  #hud {
+    position: absolute;
+    top: 16px; left: 16px;
+    z-index: 5;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  #title {
+    font-family: 'Cinzel', serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: #ffd98a;
+    text-shadow: 0 0 14px rgba(255, 170, 60, 0.6);
+    letter-spacing: 0.12em;
+  }
+  #credit {
+    position: absolute;
+    bottom: 14px; left: 16px;
+    z-index: 5;
+    font-size: 12px;
+    opacity: 0.6;
+    letter-spacing: 0.05em;
+  }
+  #gesture-label {
+    margin-top: 6px;
+    color: #7fe3ff;
+  }
+  #startBtn {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    background: transparent;
+    border: 1px solid #f2c879;
+    color: #f2c879;
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.15em;
+    padding: 14px 28px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 14px;
+  }
+  #startBtn:hover {
+    background: rgba(242, 200, 121, 0.12);
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="hud">
+    <div id="title">Mystic Hands</div>
+    <div id="gesture-label">awaiting gesture...</div>
+  </div>
+  <div id="credit">made by Elijah &amp; friend — edit this line with your names</div>
+  <button id="startBtn">Enter the Mirror Dimension</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const label = document.getElementById('gesture-label');
+const startBtn = document.getElementById('startBtn');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let particles = [];
+let ringTime = 0;
+let pinchWasActive = { Left: false, Right: false };
+
+function handScale(lm) {
+  const wrist = lm[0];
+  const midMcp = lm[9];
+  return Math.hypot(midMcp.x - wrist.x, midMcp.y - wrist.y);
+}
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function isOpenPalm(lm) {
+  const scale = handScale(lm);
+  const wrist = lm[0];
+  const tips = [8, 12, 16, 20];
+  const mcps = [5, 9, 13, 17];
+  let extendedCount = 0;
+  for (let i = 0; i < tips.length; i++) {
+    const tipDist = dist(lm[tips[i]], wrist);
+    const mcpDist = dist(lm[mcps[i]], wrist);
+    if (tipDist > mcpDist * 1.35) extendedCount++;
+  }
+  return extendedCount >= 3;
+}
+
+function isPinch(lm) {
+  const scale = handScale(lm);
+  return dist(lm[4], lm[8]) < scale * 0.35;
+}
+
+function toScreen(pt) {
+  return {
+    x: (1 - pt.x) * canvas.width,
+    y: pt.y * canvas.height
+  };
+}
+
+function spawnBurst(x, y) {
+  for (let i = 0; i < 34; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 5;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      size: 1.5 + Math.random() * 2.5
+    });
+  }
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.96;
+    p.vy *= 0.96;
+    p.life -= 0.018;
+    if (p.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(p.life, 0);
+    ctx.fillStyle = '#ffb347';
+    ctx.shadowColor = '#ff8c00';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+function drawMysticCircle(cx, cy, scale) {
+  const baseR = scale * 260;
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  ctx.rotate(ringTime * 0.6);
+  ctx.strokeStyle = 'rgba(255, 176, 59, 0.85)';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#ff9d1f';
+  ctx.shadowBlur = 20;
+  ctx.setLineDash([baseR * 0.18, baseR * 0.09]);
+  ctx.beginPath();
+  ctx.arc(0, 0, baseR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.rotate(-ringTime * 1.1);
+  ctx.setLineDash([baseR * 0.06, baseR * 0.05]);
+  ctx.strokeStyle = 'rgba(120, 227, 255, 0.7)';
+  ctx.shadowColor = '#4fd6ff';
+  ctx.beginPath();
+  ctx.arc(0, 0, baseR * 0.72, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.rotate(ringTime * 1.7);
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(255, 217, 138, 0.6)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * baseR * 0.72, Math.sin(a) * baseR * 0.72);
+    ctx.lineTo(Math.cos(a) * baseR * 0.9, Math.sin(a) * baseR * 0.9);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function onResults(results) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ringTime += 0.016;
+
+  let activeGestures = [];
+
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    results.multiHandLandmarks.forEach((lm, i) => {
+      const handedness = results.multiHandedness[i].label;
+      const palm = toScreen(lm[9]);
+      const scale = handScale(lm);
+
+      if (isOpenPalm(lm)) {
+        drawMysticCircle(palm.x, palm.y, scale);
+        activeGestures.push('circle');
+      }
+
+      const pinchNow = isPinch(lm);
+      if (pinchNow && !pinchWasActive[handedness]) {
+        const thumbTip = toScreen(lm[4]);
+        const indexTip = toScreen(lm[8]);
+        spawnBurst((thumbTip.x + indexTip.x) / 2, (thumbTip.y + indexTip.y) / 2);
+        activeGestures.push('spark burst');
+      }
+      pinchWasActive[handedness] = pinchNow;
+    });
+  }
+
+  drawParticles();
+
+  label.textContent = activeGestures.length > 0
+    ? activeGestures.join(' + ')
+    : 'awaiting gesture...';
+}
+
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.6
+});
+hands.onResults(onResults);
+
+let camera = null;
+
+startBtn.addEventListener('click', async () => {
+  startBtn.style.display = 'none';
+  camera = new Camera(video, {
+    onFrame: async () => {
+      await hands.send({ image: video });
+    },
+    width: 1280,
+    height: 720
+  });
+  camera.start();
+});
+</script>
+</body>
+</html>
